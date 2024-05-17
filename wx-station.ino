@@ -11,18 +11,19 @@
 //// - calibrate rain gauge
 
 //// PRELIMINARIES ////
-#include "RTClib.h"                 // real-time clock
+#include <RTClib.h>                 // real-time clock
+
 #include <Adafruit_Sensor.h>        // temp + rh support
 #include <DHT.h>                    // temp + rh support
 #include <DHT_U.h>                  // temp + rh support
 #include <Wire.h>                   // I2C communications (rain gauge & SD card)
-#include "SD.h"                     // SD card support
+#include <SD.h>                     // SD card support
 // Sensor pins //
-#define PIN_DHT 2                   // DHT sensor (digital)
+#define PIN_DHT 4                   // DHT sensor (digital)
+#define greenLEDpin 2               // green LED (digital)
 #define redLEDpin 3                 // red LED (digital)
-#define greenLEDpin 4               // green LED (digital)
-#define PIN_RAIN 6                  // rain gauage (digital)
-#define PIN_WIND 0                   // wind UART (digital)
+#define PIN_RAIN 7                  // rain gauage (digital)
+#define PIN_WIND 0                  // wind UART (digital)
 const int chipSelect = 10;          // digital pin for the SD cs line
 // Logging settings //
 #define LOG_INTERVAL 1000           // logging interval (milliseconds)
@@ -37,13 +38,24 @@ File logfile;                       // logging file
 bool bucketPositionA = false;       // one of the two positions of tipping-bucket               
 const double bucketTip = 0.2794;    // millimeters rain equivalent to trip tipping-bucket
 double accumRain = 0.0;             // rain accumulated during the last LOG_INTERVAL period     
-//bool first;                         // as we want readings of the (MHz) loops only at the 0th moment 
+//bool first;                         // as we want readings of the (MHz) loops only at the 0th moment
+
+void error(char *str)
+{
+  Serial.print("error: ");
+  Serial.println(str);
+  
+  // red LED indicates error
+  digitalWrite(redLEDpin, HIGH);
+
+  while(1);
+}
 
 //// SETUP ////
 void setup() {
   // INIT: serial output //
   Serial.begin(9600);    // USB
-  Serial1.begin(38400);  // RX/TX pins
+  //Serial1.begin(38400);  // RX/TX pins
   Serial.println();
   // use debugging LEDs //
   pinMode(redLEDpin, OUTPUT);
@@ -81,13 +93,13 @@ void setup() {
   int offset = round(deviation_ppm / drift_unit);
   // rtc.calibrate(PCF8523_TwoHours, offset); // Un-comment to perform calibration once drift (seconds) and observation period (seconds) are correct
   // rtc.calibrate(PCF8523_TwoHours, 0); // Un-comment to cancel previous calibration
-  Serial.print("Offset is "); Serial.println(offset); // Print to control offset
+  Serial.print("RTC offset is "); Serial.println(offset); // Print to control offset
   // INIT file //
-  d = rtc.getDay();
-  m = rtc.getMonth();
-  y = rtc.getYear();
-  char filename[8];
-  snprintf(filename, 8, "%d-%02d-%02d.CSV", y, m, d);  // name file with YYYYMMDD ISO 8601 datestamp
+  char filename[] = "WXLOG000.CSV";
+  for (uint8_t i = 0; i < 1000; i++) {
+    filename[5] = i/100 + '0';
+    filename[6] = i/10 + '0';
+    filename[7] = i%10 + '0';
     if (! SD.exists(filename)) {
       // only open a new file if it doesn't exist
       logfile = SD.open(filename, FILE_WRITE); 
@@ -95,10 +107,9 @@ void setup() {
     }
   }
   if (! logfile) {
-    error("couldnt create file");
+    error("couldn't create file");
   }
-  Serial.print("Logging to: ");  // echo log filename to serial output
-  Serial.println(filename);
+  Serial.print("Logging to: "); Serial.println(filename);  // echo log filename to serial output
   logfile.println("millis,stamp,datetime,temp_degC,rh_perc,windspeed_mps,winddir_deg");  // column headers
   // INIT: DHT //
   dht.begin();
@@ -130,41 +141,40 @@ void setup() {
   // {TBD}
   // INIT: serial monitor headers //
   #if ECHO_TO_SERIAL
-    Serial.println("millis,stamp,datetime,temp_degC,rh_perc,windspeed_mps,winddir_deg");
+    // Serial.println("millis,stamp,datetime,temp_degC,rh_perc,windspeed_mps,winddir_deg");
   #endif
 }
 
 //// Loop
 void loop() {
-  // MAINT: LED logging in progress //
-  digitalWrite(greenLEDpin, HIGH);
   // READ: real-time clock //
   DateTime now = rtc.now();
   delay((LOG_INTERVAL - 1) - (millis() % LOG_INTERVAL));  // wait until logging interval
+    // MAINT: LED logging in progress //
+  digitalWrite(greenLEDpin, HIGH);
   // LOG: milliseconds since starting //
   uint32_t m = millis();
   logfile.print(m);           // milliseconds since start
   logfile.print(",");
   #if ECHO_TO_SERIAL
-    Serial.print(m);         // milliseconds since start
-    Serial.print(",");  
+    Serial.print("ms: "); Serial.print(m); Serial.print(", ");         // milliseconds since start 
   #endif
   // LOG: timestamp //
   logfile.print(now.unixtime()); logfile.print(",");  // unix time
-  logfile.print('"'); logfile.print(now.year(), DEC); logfile.print("-");
+  logfile.print(now.year(), DEC); logfile.print("-");
   logfile.print(now.month(), DEC); logfile.print("-");
   logfile.print(now.day(), DEC); logfile.print(" ");
   logfile.print(now.hour(), DEC); logfile.print(":");
   logfile.print(now.minute(), DEC); logfile.print(":");
-  logfile.print(now.second(), DEC); logfile.print('",');
+  logfile.print(now.second(), DEC); logfile.print(",");
   #if ECHO_TO_SERIAL
-    Serial.print(now.unixtime()); Serial.print(",");
-    Serial.print('"'); Serial.print(now.year(), DEC); Serial.print("-");
+    Serial.print("unixtime: "); Serial.print(now.unixtime()); Serial.print(", ");
+    Serial.print("timestamp: "); Serial.print(now.year(), DEC); Serial.print("-");
     Serial.print(now.month(), DEC); Serial.print("-");
     Serial.print(now.day(), DEC); Serial.print(" ");
     Serial.print(now.hour(), DEC); Serial.print(":");
     Serial.print(now.minute(), DEC); Serial.print(":");
-    Serial.print(now.second(), DEC); Serial.print('",');
+    Serial.print(now.second(), DEC); Serial.print(", ");
   #endif 
   // LOG: temperature & relative humidity //
   sensors_event_t event;
@@ -172,28 +182,29 @@ void loop() {
   if (isnan(event.temperature)) {
     logfile.print("NA,");
     #if ECHO_TO_SERIAL
-      Serial.print("NA,");
+      Serial.print("temp_degC: "); Serial.print("NA, ");
     #endif
   }
   else {
     logfile.print(event.temperature); logfile.print(",");
     #if ECHO_TO_SERIAL
-      Serial.print(event.temperature); Serial.print(",");
+      Serial.print("temp_degC: "); Serial.print(event.temperature); Serial.print(", ");
     #endif
   }
   dht.humidity().getEvent(&event);
   if (isnan(event.relative_humidity)) {
     logfile.print("NA,");
     #if ECHO_TO_SERIAL
-      Serial.print("NA,");
+      Serial.print("rh_perc: "); Serial.print("NA, ");
     #endif
   }
   else {
     logfile.print(event.relative_humidity);
     logfile.print(",");
     #if ECHO_TO_SERIAL
+      Serial.print("rh_perc: ");
       Serial.print(event.relative_humidity);
-      Serial.print(",");
+      Serial.print(", ");
     #endif
   }
   // LOG: rain //
@@ -204,23 +215,23 @@ void loop() {
   if ((bucketPositionA==true)&&(digitalRead(PIN_RAIN)==LOW)){
     bucketPositionA=false;  
   }
-  logfile.print(accumRain, 8); logfile.print(",");  // maintain volumetric precision
+  logfile.print(accumRain, 8); logfile.print(", ");  // maintain volumetric precision
   #if ECHO_TO_SERIAL
-    Serial.print(accumRain, 8); Serial.print(",");
+    Serial.print("rain_mm: "); Serial.print(accumRain, 8); Serial.print(", ");
   #endif
   accumRain = 0.0;
   // LOG: wind speed & direction //
-  if (Serial1.available()) {
-    wind = Serial1.read();  // read the UART sentence from anemometer stream
-    windspd = wind.substring(13, 16);
-    logfile(windspd); logfile(",");
-    winddir = wind.substring(7, 9);
-    logfile(winddir); logfile(",");
-    #if ECHO_TO_SERIAL
-      Serial.print(windspd); Serial.print(",");
-      Serial.print(winddir); Serial.print(",");
-    #endif
-  }
+  // if (Serial1.available()) {
+  //   wind = Serial1.read();  // read the UART sentence from anemometer stream
+  //   windspd = wind.substring(13, 16);
+  //   logfile(windspd); logfile(",");
+  //   winddir = wind.substring(7, 9);
+  //   logfile(winddir); logfile(",");
+  //   #if ECHO_TO_SERIAL
+  //     Serial.print(windspd); Serial.print(", ");
+  //     Serial.print(winddir); Serial.print(", ");
+  //   #endif
+  // }
   // MAINT: line feed //
   logfile.println();
   #if ECHO_TO_SERIAL
